@@ -25,22 +25,14 @@ package com.raphfrk.protocol;
 public class PacketScan {
 	
 	public static final int maxPacketSize = 90*1024;
-	
+
+
 	static final Packet packetScan(byte[] buffer, int start, int dataLength, int mask, Packet packet) {
-		return packetScan(buffer, start, dataLength, mask, packet, false);
+	return packetScan(buffer, start, dataLength, mask, packet, false);
 	}
 
 	static final Packet packetScan(byte[] buffer, int start, int dataLength, int mask, Packet packet, boolean debug) {
 
-		if (debug) {
-			System.out.println("Start scan");
-			System.err.println("Start scan");
-			System.out.println("Start " + start);
-			System.err.println("Start " + start);
-			System.out.println("dataLength " + dataLength);
-			System.err.println("dataLength " + dataLength);
-		}
-		
 		if(dataLength == 0) {
 			return null;
 		}
@@ -55,8 +47,6 @@ public class PacketScan {
 		packet.mask = mask;
 		
 		if(mask == 0) {
-			System.out.println("Returning null as mask is null");
-			System.err.println("Returning null as mask is null");
 			return null;
 		}
 		
@@ -89,24 +79,12 @@ public class PacketScan {
 				System.err.println(packet + sb.toString());
 				throw new IllegalStateException("Unknown packet id + " + Integer.toHexString(packetId));
 			}
-			if (debug) {
-				System.out.println("zero length packet");
-				System.err.println("zero length packet");
-			}
 			return null;
 		}
 
 		int opsLength = ops.length;
 
 		for(int cnt=0; cnt<opsLength; cnt++) {
-			if (debug) {
-				if (debug) {
-					System.out.println("Op code: " + ops[cnt]);
-					System.err.println("Op code: " + ops[cnt]);
-					System.out.println("Param: " + params[cnt]);
-					System.err.println("Param: " + params[cnt]);
-				}
-			}
 			switch(ops[cnt]) {
 			case JUMP_FIXED: {
 				position = (position + params[cnt]);
@@ -114,10 +92,23 @@ public class PacketScan {
 			}
 			case BYTE_SIZED: {
 				int size = getByte(buffer, position, mask) & 0xFF;
-				if (debug) {
-					System.out.println("Size: " + size);
-					System.err.println("Size: " + size);
+				position = (position + 1);
+				if(size > maxPacketSize) {
+					if(position - start <= dataLength) {
+						System.err.println("Size to large in byte sized byte array");
+						System.out.println("Size to large in byte sized byte array");
+					}
+					return null;
 				}
+				position = (position + size);
+				if(size < 0) {
+					return null;
+				}
+				break;
+			}
+			case BYTE_SIZED_QUAD: {
+				int size = getByte(buffer, position, mask) & 0xFF;
+				size*=4;
 				position = (position + 1);
 				if(size > maxPacketSize) {
 					if(position - start <= dataLength) {
@@ -134,11 +125,10 @@ public class PacketScan {
 			}
 			case SHORT_SIZED: {
 				short size = getShort(buffer, position, mask);
-				if (debug) {
-					System.out.println("Size: " + size);
-					System.err.println("Size: " + size);
-				}
 				position = (position + 2);
+				if(size<0){
+					break;
+				}
 				if(size > maxPacketSize) {
 					if(position - start <= dataLength) {
 						System.err.println("Size to large in short sized byte array");
@@ -154,11 +144,10 @@ public class PacketScan {
 			}
 			case SHORT_SIZED_DOUBLED: {
 				short size = (short)(getShort(buffer, position, mask)<<1);
-				if (debug) {
-					System.out.println("Size: " + size);
-					System.err.println("Size: " + size);
-				}
 				position = (position + 2);
+				if(size<0){
+					break;
+				}
 				if(size > maxPacketSize) {
 					if(position - start <= dataLength) {
 						System.err.println("Size to large in short sized double byte array");
@@ -174,11 +163,10 @@ public class PacketScan {
 			}
 			case SHORT_SIZED_QUAD: {
 				short size = (short)(getShort(buffer, position, mask)<<2);
-				if (debug) {
-					System.out.println("Size: " + size);
-					System.err.println("Size: " + size);
-				}
 				position = (position + 2);
+				if(size<0){
+					break;
+				}
 				if(size > maxPacketSize) {
 					if(position - start <= dataLength) {
 						System.err.println("Size to large in short sized quad byte array");
@@ -194,17 +182,21 @@ public class PacketScan {
 			}
 			case INT_SIZED: {
 				int size = getInt(buffer, position, mask);
-				if (debug) {
+				//if(size<0){
+				//	break;
+				//}
+				/*if(packetId == 0x50) {
 					System.out.println("Size: " + size);
 					System.err.println("Size: " + size);
 				}
-				if(packetId == 0x50) {
+				if(packetId == 0x33) {
 					System.out.println("Size: " + size);
 					System.err.println("Size: " + size);
-				}
+				}*/
 				position = (position + 4);
 				if(size > maxPacketSize) {
 					if(position - start <= dataLength) {
+						System.out.println("Error:" +Integer.toHexString(0xFF &buffer[packet.start]));
 						System.err.println("Size to large in int sized byte array");
 						System.out.println("Size to large in int sized byte array");
 					}
@@ -218,21 +210,18 @@ public class PacketScan {
 			}
 			case INT_SIZED_DUMMY: {
 				int size = getInt(buffer, position, mask);
-				if (debug) {
-					System.out.println("Size: " + size);
-					System.err.println("Size: " + size);
-				}
 				if(packetId == 0x50) {
 					System.out.println("Size: " + size);
 					System.err.println("Size: " + size);
 				}
 				position = (position + 4);
+				@SuppressWarnings("unused")
 				int dummy = getInt(buffer, position, mask);
 				position = (position + 4);
 				if(size > maxPacketSize) {
 					if(position - start <= dataLength) {
-						System.err.println("Size to large in int sized byte array");
-						System.out.println("Size to large in int sized byte array");
+						System.err.println("Size to large in int sized byte array, INT_SIZED_DUMMY");
+						System.out.println("Size to large in int sized byte array, INT_SIZED_DUMMY");
 					}
 					return null;
 				}
@@ -244,10 +233,6 @@ public class PacketScan {
 			}
 			case INT_SIZED_TRIPLE: {
 				int size = getInt(buffer, position, mask)*3;
-				if (debug) {
-					System.out.println("Size: " + size);
-					System.err.println("Size: " + size);
-				}
 				position = (position + 4);
 				if(size > maxPacketSize) {
 					if(position - start <= dataLength) {
@@ -264,10 +249,6 @@ public class PacketScan {
 			}
 			case INT_SIZED_QUAD: {
 				int size = getInt(buffer, position, mask)<<2;
-				if (debug) {
-					System.out.println("Size: " + size);
-					System.err.println("Size: " + size);
-				}
 				position = (position + 4);
 				if(size > maxPacketSize) {
 					if(position - start <= dataLength) {
@@ -284,10 +265,6 @@ public class PacketScan {
 			}
 			case INT_SIZED_INT_SIZED_SINGLE: {
 				int size1 = getInt(buffer, position, mask)<<2;
-				if (debug) {
-					System.out.println("Size1: " + size1);
-					System.err.println("Size1: " + size1);
-				}
 				if (size1 < 0) {
 					return null;
 				}
@@ -312,10 +289,6 @@ public class PacketScan {
 					return null;
 					}
 					int size2 = getInt(buffer, position, mask);
-					if (debug) {
-						System.out.println("Size2: " + size2);
-						System.err.println("Size2: " + size2);
-					}
 					if (size2 < 0) {
 						return null;
 					}
@@ -341,6 +314,7 @@ public class PacketScan {
 					select = (((b = getByte(buffer, position, mask)) & 0xFF) >> 5);
 					position = (position + 1);
 					if(b != 127) {
+						//System.out.println("Metadata: "+select);
 						switch(select) {
 						case 0: {
 							position = (position + 1); break;
@@ -368,6 +342,15 @@ public class PacketScan {
 							}
 							break;
 						}
+						case 5: { //item stack
+							position = (position + 1);
+							position = getItem(buffer, position, mask);
+							break;
+						}
+						case 6: { //chunk coordinates, 3 int
+							position = (position + 12);
+							break;
+						}
 						default: {
 							if(position - start <= dataLength) {
 								System.err.println("Unknown meta data type: " + select);
@@ -382,10 +365,6 @@ public class PacketScan {
 			}
 			case OPTIONAL_MOTION: {
 				int optional = getInt(buffer, position, mask);
-				if (debug) {
-					System.out.println("optional: " + optional);
-					System.err.println("optional: " + optional);
-				}
 				position = (position + 4);
 				if(optional > 0) {
 					position = position + 6;
@@ -398,10 +377,6 @@ public class PacketScan {
 			}
 			case ITEM_ARRAY: {
 				short count = getShort(buffer, position, mask);
-				if (debug) {
-					System.out.println("count: " + count);
-					System.err.println("count: " + count);
-				}
 				position = (position + 2);
 				if(count > (maxPacketSize >> 3)) {
 					if(position - start <= dataLength) {
@@ -415,6 +390,15 @@ public class PacketScan {
 				}
 				break;
 			}
+			case CHUNK_BULK: {
+				short ChunkColumnCount = getShort(buffer, position, mask);
+				position = (position + 2);
+				int ChunkDataSize=getInt(buffer, position, mask);
+				position = (position + 4);
+				position = (position + ChunkDataSize);
+				position = (position + 12 * ChunkColumnCount);
+				break;
+			}
 			default: {
 				if(position - start <= dataLength) {
 					System.err.println("Unknown enum type " + ops[cnt]);
@@ -423,18 +407,6 @@ public class PacketScan {
 				return null;
 			}
 			}
-		}
-		
-		if (debug) {
-			System.out.println("position: " + position);
-			System.err.println("position: " + position);
-			System.out.println("Start: " + start);
-			System.err.println("Start: " + start);
-			System.out.println("dataLength: " + dataLength);
-			System.err.println("dataLength: " + dataLength);	
-			System.out.println("maxPacketSize: " + maxPacketSize);
-			System.err.println("maxPacketSize: " + maxPacketSize);
-			
 		}
 		
 		if(position - start > maxPacketSize) {
@@ -459,14 +431,20 @@ public class PacketScan {
 		short type = getShort(buffer, position, mask);
 		position = (position + 2);
 		if(type != -1) {
-			position = (position + 3);
-			if(ProtocolUnitArray.enchantedItemsIds.contains(type)) {
-				short length = getShort(buffer, position, mask);
-				position = (position + 2);
-				if(length >= 0) {
-					position += length;
-				}
+			position = (position + 3); //byte (item count) and short (damage value)
+				
+			short nbtdatalength=getShort(buffer, position, mask);
+			position = (position +2);
+			if(nbtdatalength!=-1){
+				position = (position+nbtdatalength);
 			}
+				//if(ProtocolUnitArray.enchantedItemsIds.contains(type)) {
+				//	short length = getShort(buffer, position, mask);
+				//	position = (position + 2);
+				//	if(length >= 0) {
+				//		position += length;
+				//	}
+				//}
 		}
 		
 		return position;

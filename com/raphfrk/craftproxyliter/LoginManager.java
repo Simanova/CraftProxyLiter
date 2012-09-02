@@ -30,12 +30,26 @@ import java.net.MalformedURLException;
 import java.net.Socket;
 import java.net.URL;
 import java.net.URLEncoder;
+import java.security.InvalidKeyException;
 import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.security.PrivateKey;
+import java.security.PublicKey;
 import java.security.SecureRandom;
+import java.util.Arrays;
 
+import javax.crypto.BadPaddingException;
+import javax.crypto.Cipher;
+import javax.crypto.IllegalBlockSizeException;
+import javax.crypto.NoSuchPaddingException;
+import javax.crypto.spec.SecretKeySpec;
+
+import com.raphfrk.protocol.EncryptionUtil;
 import com.raphfrk.protocol.Packet;
 import com.raphfrk.protocol.Packet01Login;
 import com.raphfrk.protocol.Packet02Handshake;
+import com.raphfrk.protocol.PacketFCKeyResponse;
+import com.raphfrk.protocol.PacketFDKeyRequest;
 import com.raphfrk.protocol.PacketFFKick;
 
 public class LoginManager {
@@ -58,8 +72,9 @@ public class LoginManager {
 
 		if(packet.getByte(0) == 0x02) {
 			Packet02Handshake CtSHandshake = new Packet02Handshake(packet);
-			info.setUsername(CtSHandshake.getUsernameSplit());
+			info.setUsername(CtSHandshake.getUsername());
 			info.setUsernameRaw(CtSHandshake.getUsername());
+			info.clientVersion=CtSHandshake.getProtocolVersion();
 		} else if (packet.getByte(0) == 0x52){
 			Packet52ProxyLogin proxyLogin = new Packet52ProxyLogin(packet);
 			info.setUsername(proxyLogin.getUsernameSplit());
@@ -140,7 +155,7 @@ public class LoginManager {
 				ptc.printLogMessage("WARNING: attempting to log into another proxy which has authentication enabled but password has not been set");
 			}
 			ptc.printLogMessage("Connecting using proxy to server connection format");
-			CtSHandshake = new Packet02Handshake(info.getUsernameRaw());
+			CtSHandshake = new Packet02Handshake(info.getUsername(), info.getHostname(), info.getPort());
 		} else {
 			ptc.printLogMessage("Connecting using proxy to proxy connection format");
 			CtSHandshake = new Packet52ProxyLogin("", fullHostname, info.getUsernameRaw());
@@ -155,7 +170,8 @@ public class LoginManager {
 		} catch (IOException ioe) {
 			return "IO Error sending client handshake to server";
 		}
-
+		System.out.println("Handshake forwarded to server");
+		
 		try {
 			packet = serverSocket.pin.getPacket(packet);
 			if(packet == null) {
@@ -166,93 +182,110 @@ public class LoginManager {
 		} catch (IOException ioe) {
 			return "IO Error reading server handshake";
 		}
-
-		Packet02Handshake StCHandshake = new Packet02Handshake(packet);
-
-		String hash = StCHandshake.getUsername();
 		
-		if(fullHostname != null) {
-			if(password == null) {
-				ptc.printLogMessage("WARNING: attempting to log into another proxy which has authentication enabled but password has not been set");
-			} else {
-				String confirmCode = sha1Hash(password + hash);
-				Packet code = new Packet52ProxyLogin(confirmCode, info.getHostname(), info.getUsernameRaw());
-				ptc.printLogMessage("Sent 0x52 packet");
-				try {
-					if(serverSocket.pout.sendPacket(code) == null) {
-						return "Server refused password packet";
-					} 
-				} catch (EOFException eof) {
-					return "Server closed connection before accepting password packet";
-				} catch (IOException ioe) {
-					return "IO Error sending password packet";
-				}
-			}
-		}
-
-		String expectedCode = null;
-		if(Globals.isAuth()) {
-			hash = getHashString();
-			StCHandshake = new Packet02Handshake(hash);
-			expectedCode = sha1Hash(password + hash);
-		}
-		
-		boolean passwordAccepted = false;
-
+		//First connection, do encryption and session checking and such
 		if(!reconnect) {
+
+			//System.out.println("Generating FD Key Request packet");
+			PublicKey key = ptc.proxyListener.getKeys().getPublic();
+			ptc.setLoginKey(Long.toString(EncryptionUtil.random().nextLong(), 16));
+            byte token[] = new byte[4];
+            EncryptionUtil.random().nextBytes(token);
+            ptc.setToken(token);
+            
+            PacketFDKeyRequest keyrequest=new PacketFDKeyRequest(ptc.getLoginKey(), key.getEncoded(), token);
+			//System.out.println("Sending FD Key Request packet");
 			try {
-				if(clientSocket.pout.sendPacket(StCHandshake) == null) {
-					return "Client didn't accept handshake packet";
+				if(clientSocket.pout.sendPacket(keyrequest) == null) {
+					return "Client didn't accept key request packet";
 				}
 			} catch (EOFException eof) {
-				return "Client closed connection before accepting handshake";
+				return "Client closed connection before accepting key request packet";
 			} catch (IOException ioe) {
-				return "IO Error sending server handshake";
+				return "IO Error sending server login";
 			}
+			//System.out.println("Done");
+			
+			//System.out.println("Recieving key response packet");
+			Packet keyresponsepacket=null;
+			try {
+				keyresponsepacket=clientSocket.pin.getPacket(keyresponsepacket);
+			} catch (EOFException eof) {
+				return "Client closed connection before sending key response packet";
+			} catch (IOException ioe) {
+				return "IO Error receiving client key response packet";
+			}
+			
+			if(keyresponsepacket == null) {
+				return "Client didn't send key response packet";
+			}
+
+			//System.out.println("Receieved");
+			//System.out.println("Parsing key response packet");
+			PacketFCKeyResponse keyresponse=new PacketFCKeyResponse(keyresponsepacket);
+			//System.out.println("Packet ID:"+(keyresponse.buffer[keyresponsepacket.start] & 0xFF));
+			keyresponse.initData();
+			//System.out.println("Data initialized");
+	        PrivateKey priv = ptc.proxyListener.getKeys().getPrivate();
+
+			//System.out.println("Setting secret key");
+	        ptc.setSecretKey(new SecretKeySpec(encryptBytes(priv, keyresponse.sharedKey), "AES/CBC/PKCS5Padding"));
+			
+	        //System.out.println("Checking token reply");
+	        if (!Arrays.equals(ptc.getToken(), encryptBytes(priv, keyresponse.verifyToken))) {
+	            return "Invalid client token reply";
+	        }
+			
+	        System.out.println("Authing with session.minecraft.net");
+			String encrypted = new BigInteger(EncryptionUtil.encrypt(ptc.getLoginKey(), ptc.proxyListener.getKeys().getPublic(), ptc.getSecretKey())).toString(16);
+			String response = null;
 			
 			try {
-				packet = clientSocket.pin.getPacket(packet, 10000);
-				if (packet == null) {
-					return "Malformed Login packet, server/client version mismatch?";
-				} else if (packet.getByte(0) != 1 && packet.getByte(0) != 0x52) {
-					return "Client didn't send login packet";
+	            URL url = new URL("http://session.minecraft.net/game/checkserver.jsp?user=" + URLEncoder.encode(info.getUsername(), "UTF-8") + "&serverId=" + URLEncoder.encode(encrypted, "UTF-8"));
+	            BufferedReader reader = new BufferedReader(new InputStreamReader(url.openStream()));
+	            response = reader.readLine();
+	            reader.close();
+	        } catch (IOException e) {
+	            response = e.toString();
+	            return response;
+	        }
+			
+			if(!response.equals("YES")) {
+				return "Failed to verify username!";
+			}
+	        
+			//Send empty key response packet to trigger client encryption
+	        packet = new Packet(5);
+			packet.writeByte((byte)0xFC);
+			packet.writeShort((short)0);
+			packet.writeShort((short)0);
+			try {
+				if(clientSocket.pout.sendPacket(packet) == null) {
+					return "Client didn't accept init encryption (empty key request) packet";
 				}
-				if (packet.getByte(0) == 1) {
-					packet = new Packet01Login(packet);
-					info.clientVersion = packet.getInt(1);
-					info.craftProxyLogin = ((Packet01Login)packet).getSeed() == MAGIC_SEED;
-				}
-				//((Packet01Login)packet).setSeed(MAGIC_SEED);
 			} catch (EOFException eof) {
-				return "Client closed connection before sending login";
+				return "Client closed connection before accepting init encryption (empty key request)";
 			} catch (IOException ioe) {
-				return "IO Error reading client login";
+				return "IO Error sending init encryption (empty key request)";
 			}
 			
-			if(packet.getByte(0) == 0x52) {
-				Packet52ProxyLogin proxyLogin = new Packet52ProxyLogin(packet);
-				if(proxyLogin.getCode().equals(expectedCode)) {
-					ptc.printLogMessage("Password accepted");
-					passwordAccepted = true;
-					try {
-						packet = clientSocket.pin.getPacket(packet);
-						if(packet == null) {
-							return "Client didn't send login packet";
-						}
-						info.clientVersion = packet.getInt(1);
-					} catch (EOFException eof) {
-						return "Client closed connection before sending login";
-					} catch (IOException ioe) {
-						return "IO Error reading client login";
-					}
-				} else {
-					ptc.printLogMessage("Expected: " + expectedCode);
-					ptc.printLogMessage("Received: " + proxyLogin.getCode());
-					return "Attemped password login failed";
+			System.out.println("Switching to encrypted stream on client socket");
+			clientSocket.setAES();
+			
+			packet = null;
+			try {
+				if(clientSocket.pin.getPacket(packet) == null) {
+					return "Client didn't send client status packet";
 				}
+			} catch (EOFException eof) {
+				return "Client closed connection before sending client status packet";
+			} catch (IOException ioe) {
+				return "IO Error receiving client status packet";
 			}
 			
+		//Else, not our first session. Get stuff set up with the server.
 		} else {
+			System.out.println("Reconnecting");
 			String username = info.getUsername();
 			packet = new Packet(200);
 			packet.writeByte((byte)0x01);
@@ -267,8 +300,9 @@ public class LoginManager {
 			packet.writeByte((byte)0);	
 		}
 
-		Packet01Login CtSLogin = new Packet01Login(packet);
-
+		Packet CtSLogin = new Packet(2);
+		CtSLogin.writeByte((byte) 0xCD);
+		CtSLogin.writeByte((byte)0);
 		try {
 			if(serverSocket.pout.sendPacket(CtSLogin) == null) {
 				return "Server didn't accept login packet";
@@ -278,7 +312,8 @@ public class LoginManager {
 		} catch (IOException ioe) {
 			return "IO Error sending client login to server";
 		}
-
+		//System.out.println("Sent client status packet to server");
+		
 		try {
 			packet = serverSocket.pin.getPacket(packet);
 			if(packet == null) {
@@ -290,24 +325,17 @@ public class LoginManager {
 			return "IO Error reading server login";
 		}
 
-		if(!passwordAccepted && !reconnect && Globals.isAuth()) {
-			if(!authenticate(ptc.connectionInfo.getUsername(), hash, ptc)) {
-				return "Authentication failed";
-			}
-		}
-
 		Packet01Login StCLogin = new Packet01Login(packet);	
 
-		info.serverPlayerId = StCLogin.getVersion();
+		info.serverPlayerId = StCLogin.getUserEntityId();
+		info.loginDifficulty = StCLogin.getDifficulty();
 		info.loginDimension = StCLogin.getDimension();
 		info.loginUnknownRespawn = StCLogin.getUnknown();
-		info.loginCreative = (byte)StCLogin.getMode();
-		info.loginHeight = StCLogin.getHeight();
-		info.loginSeed = StCLogin.getSeed();
+		info.loginCreative = StCLogin.getMode();
 		info.levelType = StCLogin.getLevelType();
-		
+		//System.out.println(info.serverPlayerId+":"+info.loginDimension+":"+info.loginUnknownRespawn+":"+info.loginCreative+":"+info.levelType+":"+StCLogin.getMaxPlayers());
 		if(!reconnect) {
-			info.clientPlayerId = StCLogin.getVersion();
+			info.clientPlayerId = StCLogin.getUserEntityId();
 			try {
 				if(clientSocket.pout.sendPacket(StCLogin) == null) {
 					return "Client didn't accept login packet";
@@ -319,81 +347,48 @@ public class LoginManager {
 			}
 		}
 
+		Packet keepalive = new Packet(5);
+		keepalive.writeByte((byte) 0x00);
+		keepalive.writeByte((byte)0);
+		keepalive.writeByte((byte)0);
+		keepalive.writeByte((byte)0);
+		keepalive.writeByte((byte)0);
+		try {
+			if(serverSocket.pout.sendPacket(keepalive) == null) {
+				return "Server didn't accept keepalive packet";
+			}
+		} catch (EOFException eof) {
+			return "Server closed connection before accepting keepalive";
+		} catch (IOException ioe) {
+			return "IO Error sending client keepalive to server";
+		}
+		
 		return null;
 
 	}
 
-	static SecureRandom hashGenerator = new SecureRandom();
-
-	static String getHashString() {
-		long hashLong;
-		synchronized( hashGenerator ) {
-			hashLong = hashGenerator.nextLong() & 0x7FFFFFFFFFFFFFFFL;
-		}
-
-		return Long.toHexString(hashLong);
-	}
-
-	static boolean authenticate( String username , String hashString, PassthroughConnection ptc )  {
-
-		for (int i = 0; i < 5; i++) {
-			try {
-				String encodedUsername =  URLEncoder.encode(username, "UTF-8");
-				String encodedHashString =  URLEncoder.encode(hashString, "UTF-8");
-				String authURLString = new String( "http://www.minecraft.net/game/checkserver.jsp?user=" + encodedUsername + "&serverId=" + encodedHashString);
-				if(!Globals.isQuiet()) {
-					ptc.printLogMessage("Authing with " + authURLString);
-				}
-				URL minecraft = new URL(authURLString);
-				BufferedReader in = new BufferedReader(new InputStreamReader(minecraft.openStream()));
-
-				String reply = in.readLine();
-
-				if( Globals.isInfo() ) {
-					ptc.printLogMessage("Server Response: " + reply );
-				}
-
-				in.close();
-
-				if( reply != null && reply.equals("YES")) {
-
-					if(!Globals.isQuiet()) {
-						ptc.printLogMessage("Auth successful");
-					}
-					return true;
-				}
-			} catch (MalformedURLException mue) {
-				ptc.printLogMessage("Auth URL error");
-				return false;
-			} catch (IOException ioe) {
-				if (i < 5) {
-					ptc.printLogMessage("Problem connecting to auth server - trying again");
-				} else {
-					ptc.printLogMessage("Problem connecting to auth server");
-					return false;
-				}
-			}
-		}
-
-		return false;
-	}
-
-	static String sha1Hash( String inputString ) {
-
+	private static byte[] encryptBytes(PrivateKey key, byte[] bytes) {
 		try {
-			MessageDigest md = MessageDigest.getInstance("SHA");
-			md.reset();
-
-			md.update(inputString.getBytes("utf-8"));
-
-			BigInteger bigInt = new BigInteger( md.digest() );
-
-			return bigInt.toString( 16 ) ;
-
-		} catch (Exception ioe) {
-			return "hash error";
+			Cipher cipher = Cipher.getInstance(key.getAlgorithm());
+			cipher.init(2, key);
+			return cipher.doFinal(bytes);
+		} catch (InvalidKeyException e) {
+			System.out.println("InvalidKeyException: "+e.getMessage());
+			e.printStackTrace();
+		} catch (NoSuchAlgorithmException e) {
+			System.out.println("NoSuchAlgorithmException: "+e.getMessage());
+			e.printStackTrace();
+		} catch (NoSuchPaddingException e) {
+			System.out.println("NoSuchPaddingException: "+e.getMessage());
+			e.printStackTrace();
+		} catch (IllegalBlockSizeException e) {
+			System.out.println("IllegalBlockSizeException: "+e.getMessage());
+			e.printStackTrace();
+		} catch (BadPaddingException e) {
+			System.out.println("BadPaddingException: "+e.getMessage());
+			e.printStackTrace();
 		}
 
+		return null;
 	}
-
 }

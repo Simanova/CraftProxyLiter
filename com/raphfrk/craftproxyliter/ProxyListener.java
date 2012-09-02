@@ -30,6 +30,9 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.SocketException;
 import java.net.SocketTimeoutException;
+import java.security.KeyPair;
+import java.security.KeyPairGenerator;
+import java.security.NoSuchAlgorithmException;
 import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.concurrent.ConcurrentHashMap;
@@ -47,7 +50,8 @@ public class ProxyListener extends KillableThread {
 	private final String listenHostname;
 	private final String defaultHostname;
 	private final FairnessManager fairnessManager = new FairnessManager();
-
+	private KeyPair keys;
+	
 	LinkedList<PassthroughConnection> connections = new LinkedList<PassthroughConnection>();
 
 	ProxyListener(String listenHostname, String defaultHostname) {
@@ -56,6 +60,14 @@ public class ProxyListener extends KillableThread {
 		this.listenHostname = listenHostname;
 		this.defaultHostname = defaultHostname;
 		setName("Proxy Listener");
+		
+		try {
+			KeyPairGenerator gen = KeyPairGenerator.getInstance("RSA");
+			gen.initialize(1024);
+			this.keys = gen.generateKeyPair();
+		} catch (NoSuchAlgorithmException e) {
+			e.printStackTrace();
+		}
 	}
 
 	public ConcurrentHashMap<String,Long> lastLogin = new ConcurrentHashMap<String,Long>();
@@ -265,4 +277,8 @@ public class ProxyListener extends KillableThread {
 		}
 	}
 
+	public KeyPair getKeys() {
+		return this.keys;
+	}
+	
 }

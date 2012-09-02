@@ -31,7 +31,6 @@ import com.raphfrk.craftproxyliter.Globals;
 
 public class ProtocolInputStream {
 
-	private final int SPARE_BYTES = 64;
 	private final InputStream in;
 
 	final private byte[] buffer;
@@ -104,19 +103,12 @@ public class ProtocolInputStream {
 				} else {
 					available = startMod - endMod;
 				}
-				available = Math.min(available, buffer.length - SPARE_BYTES - length);
-				if (available > 1) {
-					available--;
-				}
 				int actual = 0;
 				try {
 					actual = in.read(buffer, endMod, available);
-					
+
 					if(actual > 0 && packetId == -1) {
 						packetId = 0xFF & buffer[startMod];
-					}
-					if (actual > 0) {
-						length += actual;
 					}
 
 					readSoFar += actual;
@@ -134,33 +126,11 @@ public class ProtocolInputStream {
 				if(actual == -1) {
 					throw new EOFException();
 				} else {
-					if(length > buffer.length - 1 - SPARE_BYTES) {
-						Packet temp = PacketScan.packetScan(buffer, start, length - actual, bufferMask, packet, true);
-						System.err.println("Length of last read: " + length);
-						System.out.println("Length of last read: " + length);
-						System.err.println("Return packet: " + temp);
-						System.out.println("Return packet: " + temp);
-						System.err.println("Buffer full and unable to parse packet");
-						System.out.println("Buffer full and unable to parse packet");
-						StringBuilder sb = new StringBuilder("Bytes: ");
-						boolean first = true;
-						for (int i = -32; i < 256; i++) {
-							if (!first) {
-								sb.append(", ");
-							} else {
-								first = false;
-							}
-							int pos = (start + i) & bufferMask;
-							if (i == 0) {
-								sb.append("_");
-							}
-							sb.append(Integer.toHexString(buffer[pos] & 0xFF));
-							if (i == 0) {
-								sb.append("_");
-							}
-						}
-						System.out.println(sb.toString());
-						throw new IOException("Buffer full and unable to parse packet");
+					length += actual;
+					if(length > buffer.length - 1) {
+						System.err.println("Buffer mis-calculation for length??");
+						System.out.println("Buffer mis-calculation for length??");
+						throw new IOException("Buffer mis-calculation for length??");
 					}
 				}
 			}
@@ -187,5 +157,8 @@ public class ProtocolInputStream {
 
 	}
 
-
+	 public void close() throws IOException {
+	   in.close();
+	 }
+	
 }

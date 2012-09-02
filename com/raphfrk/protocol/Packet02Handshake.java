@@ -27,20 +27,32 @@ public class Packet02Handshake extends Packet{
 		super(packet, 2);
 	}
 	
-	public Packet02Handshake(String username) {
-		super(username.length()*2 + 3, (byte)2);
+	public Packet02Handshake(String username, String serverhost, int port) {
+		super(1 + 1 + 2 +username.length()*2 + 2 + serverhost.length()*2 + 4, (byte)2);
 		super.writeByte((byte)0x2);
+		//Protocol version
+		super.writeByte((byte) 39);
 		super.writeString16(username);
+		super.writeString16(serverhost);
+		super.writeInt(port);
+	}
+	
+	public byte getProtocolVersion(){
+		return getByte(1);
 	}
 	
 	public String getUsername() {
-		return getString16(1);
+		return getString16(2);
 	}
 	
-	public String getUsernameSplit() {
-		String raw = getString16(1);
-		String[] split = raw.split(";");
-		return split[0];
+	public String getServerHost() {
+		short length1=(short)(getShort(2)*2);
+		return getString16(length1+2+2);
 	}
 	
+	public int getPort(){
+		short length1=(short)(getShort(2)*2);
+		short length2=(short)(getShort(length1+2)*2);
+		return getInt(length2+2);
+	}
 }

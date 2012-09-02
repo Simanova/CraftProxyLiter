@@ -33,6 +33,14 @@ import java.util.ArrayList;
 import java.util.Enumeration;
 import java.util.List;
 
+import org.bouncycastle.crypto.BufferedBlockCipher;
+import org.bouncycastle.crypto.engines.AESFastEngine;
+import org.bouncycastle.crypto.io.CipherInputStream;
+import org.bouncycastle.crypto.io.CipherOutputStream;
+import org.bouncycastle.crypto.modes.CFBBlockCipher;
+import org.bouncycastle.crypto.params.KeyParameter;
+import org.bouncycastle.crypto.params.ParametersWithIV;
+
 import com.raphfrk.craftproxyliter.Globals;
 import com.raphfrk.craftproxyliter.LocalhostIPFactory;
 import com.raphfrk.protocol.ProtocolInputStream;
@@ -40,23 +48,24 @@ import com.raphfrk.protocol.ProtocolOutputStream;
 
 public class LocalSocket {
 
-	public final boolean success;
+	public boolean success;
 
-	private final DataInputStream in;
-	public final ProtocolInputStream pin;
-	private final DataOutputStream out;
-	public final ProtocolOutputStream pout;
+	private DataInputStream in;
+	public ProtocolInputStream pin;
+	private DataOutputStream out;
+	public ProtocolOutputStream pout;
 	public final Socket socket;
 	public final PassthroughConnection ptc;
-
+	public final int worldHeight;
+	
 	public static Socket openSocket(String hostname, int port, PassthroughConnection ptc) {
 
 		ptc.printLogMessage("Attempting to connect to: " + hostname + ":" + port);
-		
+
 		Socket socket = null;
 
 		try {
-			if(hostname.trim().startsWith("localhost") && Globals.varyLocalhost()) {
+			if(Globals.varyLocalhost() && (hostname.trim().equals("localhost") || isLocalIP(hostname.trim()))) {
 				String fakeLocalIP = LocalhostIPFactory.getNextIP();
 				if(!Globals.isQuiet()) {
 					ptc.printLogMessage("Connecting to: " + hostname + ":" + port + " from " + fakeLocalIP );
@@ -69,6 +78,7 @@ public class LocalSocket {
 			ptc.printLogMessage("Unknown hostname: " + hostname);
 			return null;
 		} catch (IOException e) {
+			ptc.printLogMessage(e.getMessage());
 			if(hostname.trim().startsWith("localhost")) {
 				ptc.printLogMessage("Trying alternative IPs on localhost, this is slow");
 				List<String> hostnames = getLocalIPs();
@@ -79,11 +89,6 @@ public class LocalSocket {
 					} catch (IOException ioe) {
 						continue;
 					}
-					ptc.printLogMessage("WARNING: Used alternative IP to connect: " + h);
-					ptc.printLogMessage("WARNING: Used alternative IP to connect: " + h);
-					ptc.printLogMessage("WARNING: Used alternative IP to connect: " + h);
-					ptc.printLogMessage("WARNING: Used alternative IP to connect: " + h);
-					ptc.printLogMessage("WARNING: Used alternative IP to connect: " + h);
 					ptc.printLogMessage("WARNING: Used alternative IP to connect: " + h);
 					ptc.printLogMessage("You should change your default server parameter to include the IP address: " + h);
 					break;
@@ -110,6 +115,10 @@ public class LocalSocket {
 
 		return socket;
 
+	}
+
+	public static boolean isLocalIP(String hostname) {
+		return getLocalIPs().contains(hostname);
 	}
 
 	public static List<String> getLocalIPs() {
@@ -148,8 +157,11 @@ public class LocalSocket {
 		try {
 			pout.flush();
 			pout.close();
+			pin.close();
+			in.close();
 			socket.close();
 		} catch (IOException e) {
+			e.printStackTrace();
 			return false;
 		}
 		return true;
@@ -158,10 +170,11 @@ public class LocalSocket {
 	LocalSocket(Socket socket, PassthroughConnection ptc, int worldHeight) {
 		this.ptc = ptc;
 		this.socket = socket;
+		this.worldHeight=worldHeight;
 		DataInputStream inLocal = null;
 		DataOutputStream outLocal = null;
 		try {
-			inLocal = new DataInputStream( socket.getInputStream() );
+			inLocal = new DataInputStream( this.socket.getInputStream() );
 		} catch (IOException e) {
 			ptc.printLogMessage("Unable to open data stream to client");
 			if( inLocal != null ) {
@@ -181,7 +194,7 @@ public class LocalSocket {
 		}
 
 		try {
-			outLocal = new DataOutputStream( socket.getOutputStream() );
+			outLocal = new DataOutputStream( this.socket.getOutputStream() );
 		} catch (IOException e) {
 			ptc.printLogMessage("Unable to open data stream from client");
 			if( outLocal != null ) {
@@ -200,10 +213,21 @@ public class LocalSocket {
 			return;
 		}
 		in = inLocal;
-		pin = new ProtocolInputStream(in, worldHeight*1024);
+		pin = new ProtocolInputStream(in, 255*16*1024);
 		out = outLocal;
 		pout = new ProtocolOutputStream(out);
 		success = true;
+	}
+	
+	public void setAES() {
+		BufferedBlockCipher in = new BufferedBlockCipher(new CFBBlockCipher(new AESFastEngine(), 8));
+		in.init(false, new ParametersWithIV(new KeyParameter(this.ptc.getSecretKey().getEncoded()), this.ptc.getSecretKey().getEncoded(), 0, 16));
+		BufferedBlockCipher out = new BufferedBlockCipher(new CFBBlockCipher(new AESFastEngine(), 8));
+		out.init(true, new ParametersWithIV(new KeyParameter(this.ptc.getSecretKey().getEncoded()), this.ptc.getSecretKey().getEncoded(), 0, 16));
+		this.in = new DataInputStream(new CipherInputStream(this.in, in));
+		this.out = new DataOutputStream(new CipherOutputStream(this.out, out));
+		pin = new ProtocolInputStream(this.in, 255*16*1024);
+		pout = new ProtocolOutputStream(this.out);
 	}
 
 }

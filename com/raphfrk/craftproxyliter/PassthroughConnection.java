@@ -27,6 +27,8 @@ import java.text.DateFormat;
 import java.util.Date;
 import java.util.concurrent.ConcurrentLinkedQueue;
 
+import javax.crypto.SecretKey;
+
 import com.raphfrk.protocol.KillableThread;
 import com.raphfrk.protocol.Packet09Respawn;
 import com.raphfrk.protocol.Packet10Holding;
@@ -42,7 +44,11 @@ public class PassthroughConnection extends KillableThread {
 	final FairnessManager fairnessManager;
 	public final ProxyListener proxyListener;
 	public final String IPAddress;
-
+	private SecretKey key;
+	
+	private String loginKey;
+	private byte token[];
+	
 	PassthroughConnection(Socket clientSocket, String address, String hostname, String listenHostname, FairnessManager fairnessManager, ProxyListener proxyListener) {
 
 		this.clientSocket = clientSocket;
@@ -256,4 +262,29 @@ public class PassthroughConnection extends KillableThread {
 		return;
 	}
 
+	
+	public String getLoginKey() {
+		return this.loginKey;
+	}
+	
+	public void setLoginKey(String key) {
+		this.loginKey = key;
+	}
+	
+	public byte[] getToken() {
+		return this.token;
+	}
+	
+	public void setToken(byte token[]) {
+		this.token = token;
+	}
+	
+	public SecretKey getSecretKey() {
+		return this.key;
+	}
+	
+	public void setSecretKey(SecretKey key) {
+		this.key = key;
+	}
+	
 }

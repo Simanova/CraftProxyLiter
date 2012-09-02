@@ -22,49 +22,45 @@
 package com.raphfrk.protocol;
 
 public class Packet01Login extends Packet {
-	
+
 	public Packet01Login(Packet packet) {
 		super(packet, 1);
 	}
-	
-	public int getVersion() {
+
+	public int getUserEntityId() {
 		return getInt(1);
 	}
-	
-	public String getUsername() {
-		return getString16(5);
+
+	private int getLevelStringStart() {
+		return 5;
 	}
-	
-	public long getSeed() {
-		return getLong(5 + getString16Length(5));
-	}
-	
-	public void setSeed(long seed) {
-		setLong(5 + getString16Length(5), seed);
-	}
-	
+
 	public String getLevelType() {
-		return getString16(13 + getString16Length(5));
+		return getString16(getLevelStringStart());
 	}
-	
-	public int getMode() {
-		return getInt(13 + getString16Length(5) + getString16Length(13 + getString16Length(5)));
+
+	private int getModeStart() {
+		return getLevelStringStart() + getString16Length(getLevelStringStart());
 	}
-	
+
+	public byte getMode() {
+		return getByte(getModeStart());
+	}
+
 	public byte getDimension() {
-		return getByte(17 + getString16Length(5) + getString16Length(13 + getString16Length(5)));
+		return getByte(getModeStart() + 1);
+	}
+
+	public byte getDifficulty() {
+		return getByte(getModeStart() + 2);
 	}
 	
 	public byte getUnknown() {
-		return getByte(18 + getString16Length(5) + getString16Length(13 + getString16Length(5)));
+		return getByte(getModeStart() + 3);
 	}
-	
-	public byte getHeight() {
-		return getByte(19 + getString16Length(5) + getString16Length(13 + getString16Length(5)));
-	}
-	
+
 	public byte getMaxPlayers() {
-		return getByte(20 + getString16Length(5) + getString16Length(13 + getString16Length(5)));
+		return getByte(getModeStart() + 4);
 	}
 
 }
